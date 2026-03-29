@@ -3,16 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
-import numpy as np
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
-import os
 from config import DEFAULT_MEMES
 
 # Инициализация приложения
 app = FastAPI(
     title="Meme API",
-    description="API для поиска мемов с использованием нейросети",
+    description="API для поиска мемов",
     version="1.0.0"
 )
 
@@ -42,66 +38,37 @@ class SearchResponse(BaseModel):
 class MemesResponse(BaseModel):
     memes: List[Meme]
 
-# Класс для семантического поиска
-class MemeSearchEngine:
-    def __init__(self):
-        # Загружаем предобученную модель для эмбеддингов
-        # Используем легковесную модель для экономии ресурсов
-        print("Загрузка модели для семантического поиска...")
-        self.model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-        print("Модель загружена!")
-        
-        # Подготовка данных мемов
-        self.memes = DEFAULT_MEMES
-        
-        # Создаём текстовые представления для каждого мема
-        # (объединяем title, description и tags)
-        self.meme_texts = []
-        for meme in self.memes:
-            text_parts = [
-                meme['title'],
-                meme.get('description', ''),
-                ' '.join(meme.get('tags', []))
-            ]
-            self.meme_texts.append(' '.join(filter(None, text_parts)))
-        
-        # Вычисляем эмбеддинги для всех мемов
-        print("Вычисление эмбеддингов для мемов...")
-        self.meme_embeddings = self.model.encode(self.meme_texts)
-        print(f"Готово! Обработано {len(self.memes)} мемов")
+# Простой поиск по ключевым словам (без нейросети)
+def search_memes(query: str, top_k: int = 20) -> List[dict]:
+    """Поиск мемов по ключевым словам"""
+    query_lower = query.lower().strip()
     
-    def search(self, query: str, top_k: int = 20) -> List[dict]:
-        """Поиск релевантных мемов по запросу"""
-        # Кодируем запрос
-        query_embedding = self.model.encode([query])
-        
-        # Вычисляем косинусное сходство
-        similarities = cosine_similarity(query_embedding, self.meme_embeddings)[0]
-        
-        # Сортируем по релевантности
-        top_indices = np.argsort(similarities)[::-1][:top_k]
-        
-        # Возвращаем топ мемов
-        results = []
-        for idx in top_indices:
-            if similarities[idx] > 0:  # Только релевантные результаты
-                meme = self.memes[idx].copy()
-                meme['score'] = float(similarities[idx])
-                results.append(meme)
-        
-        return results
+    if not query_lower:
+        return DEFAULT_MEMES[:top_k]
     
-    def get_all_memes(self, limit: int = 20) -> List[dict]:
-        """Получить все мемы (или лимит)"""
-        return self.memes[:limit]
-
-# Инициализация поискового движка
-search_engine = None
-
-@app.on_event("startup")
-async def startup_event():
-    global search_engine
-    search_engine = MemeSearchEngine()
+    results = []
+    for meme in DEFAULT_MEMES:
+        score = 0
+        # Проверяем совпадения в title
+        if query_lower in meme['title'].lower():
+            score += 3
+        # Проверяем совпадения в description
+        if query_lower in meme.get('description', '').lower():
+            score += 2
+        # Проверяем совпадения в tags
+        for tag in meme.get('tags', []):
+            if query_lower in tag.lower():
+                score += 1
+        
+        if score > 0:
+            meme_copy = meme.copy()
+            meme_copy['score'] = score
+            results.append(meme_copy)
+    
+    # Сортируем по релевантности
+    results.sort(key=lambda x: x['score'], reverse=True)
+    
+    return results[:top_k]
 
 @app.get("/")
 async def root():
@@ -117,18 +84,14 @@ async def root():
 @app.get("/api/memes", response_model=MemesResponse)
 async def get_memes(limit: int = 20):
     """Получить список мемов"""
-    memes = search_engine.get_all_memes(limit=limit)
-    return {"memes": memes}
+    return {"memes": DEFAULT_MEMES[:limit]}
 
 @app.post("/api/search", response_model=SearchResponse)
-async def search_memes(request: SearchRequest):
-    """Поиск мемов с использованием нейросети"""
-    if not request.query.strip():
-        return {"memes": search_engine.get_all_memes()}
+async def search_memes_endpoint(request: SearchRequest):
+    """Поиск мемов по ключевым словам"""
+    results = search_memes(request.query, top_k=20)
     
-    results = search_engine.search(request.query, top_k=20)
-    
-    # Удаляем score из результатов (не нужен клиенту)
+    # Удаляем score из результатов
     for meme in results:
         meme.pop('score', None)
     
@@ -139,8 +102,7 @@ async def health_check():
     """Проверка здоровья сервера"""
     return {
         "status": "healthy",
-        "model_loaded": search_engine is not None,
-        "memes_count": len(DEFAULT_MEMES) if search_engine else 0
+        "memes_count": len(DEFAULT_MEMES)
     }
 
 # Запуск сервера

@@ -2,11 +2,6 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Устанавливаем системные зависимости
-RUN apt-get update && apt-get install -y \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
-
 # Копируем зависимости
 COPY requirements.txt .
 
@@ -19,5 +14,5 @@ COPY . .
 # Открываем порт
 EXPOSE 8000
 
-# Запускаем приложение
+# Запускаем приложение через uvicorn
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
