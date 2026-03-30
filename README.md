@@ -1,1 +1,0 @@
-# memefire-webapp
